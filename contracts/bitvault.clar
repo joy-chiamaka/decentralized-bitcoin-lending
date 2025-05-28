@@ -316,3 +316,64 @@
         (<= collateral-ratio (var-get liquidation-threshold))
     )
 )
+
+;; Collateral Ratio Calculation
+(define-private (calculate-collateral-ratio
+        (borrow-amount uint)
+        (collateral-amount uint)
+    )
+    (if (is-eq borrow-amount u0)
+        u0
+        (* (/ (* collateral-amount u10000) borrow-amount) u100)
+    )
+)
+
+;; Collateral Sufficiency Validation
+(define-private (is-collateral-sufficient
+        (collateral-value uint)
+        (borrow-value uint)
+    )
+    (>= (* collateral-value MIN-COLLATERAL-RATIO) (* borrow-value u100))
+)
+
+;; Liquidation Reward Calculation
+(define-private (calculate-liquidation-reward
+        (liquidation-amount uint)
+        (collateral-amount uint)
+    )
+    (let (
+            (base-reward (* liquidation-amount u105)) ;; 5% liquidation bonus
+            (max-reward (* collateral-amount u50)) ;; Maximum 50% of collateral
+        )
+        (if (> base-reward max-reward)
+            max-reward
+            base-reward
+        )
+    )
+)
+
+;; READ-ONLY DATA QUERIES
+
+;; User Deposit Information Retrieval
+(define-read-only (get-user-deposits (user principal))
+    (default-to { amount: u0 } (map-get? user-deposits { user: user }))
+)
+
+;; User Borrow Position Retrieval
+(define-read-only (get-user-borrows (user principal))
+    (default-to {
+        amount: u0,
+        collateral: u0,
+    }
+        (map-get? user-borrows { user: user })
+    )
+)
+
+;; Protocol Statistics Overview
+(define-read-only (get-protocol-stats)
+    {
+        total-deposits: (var-get total-deposits),
+        total-borrows: (var-get total-borrows),
+        interest-rate: (var-get interest-rate),
+    }
+)
