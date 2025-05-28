@@ -235,3 +235,84 @@
         )
     )
 )
+
+;; LIQUIDATION SYSTEM
+
+;; Position Liquidation Function
+(define-public (liquidate
+        (token-contract <sip-010-trait>)
+        (user principal)
+        (amount uint)
+    )
+    (let (
+            (liquidator tx-sender)
+            (user-borrow (default-to {
+                amount: u0,
+                collateral: u0,
+            }
+                (map-get? user-borrows { user: user })
+            ))
+            (borrow-amount (get amount user-borrow))
+            (collateral-amount (get collateral user-borrow))
+        )
+        ;; Liquidation Validation
+        (asserts! (is-valid-token token-contract) ERR-NOT-AUTHORIZED)
+        (asserts! (can-liquidate user borrow-amount collateral-amount)
+            ERR-LIQUIDATION-FAILED
+        )
+        (asserts! (<= amount borrow-amount) ERR-INVALID-AMOUNT)
+        ;; Execute Liquidation Payment
+        (match (contract-call? token-contract transfer amount liquidator
+            (as-contract tx-sender) none
+        )
+            success (begin
+                (let (
+                        (reward (calculate-liquidation-reward amount collateral-amount))
+                        (current-rewards (default-to { amount: u0 }
+                            (map-get? liquidator-rewards { liquidator: liquidator })
+                        ))
+                    )
+                    ;; Update Liquidator Rewards
+                    (map-set liquidator-rewards { liquidator: liquidator } { amount: (+ (get amount current-rewards) reward) })
+                    ;; Update User Position After Liquidation
+                    (map-set user-borrows { user: user } {
+                        amount: (- borrow-amount amount),
+                        collateral: (- collateral-amount reward),
+                    })
+                    (ok true)
+                )
+            )
+            error (err u101)
+        )
+    )
+)
+
+;; Liquidation Reward Claim Function
+(define-public (claim-rewards (token-contract <sip-010-trait>))
+    (let (
+            (liquidator tx-sender)
+            (rewards (default-to { amount: u0 }
+                (map-get? liquidator-rewards { liquidator: liquidator })
+            ))
+            (reward-amount (get amount rewards))
+        )
+        ;; Reward Validation
+        (asserts! (> reward-amount u0) ERR-INSUFFICIENT-BALANCE)
+        ;; Reset Liquidator Rewards
+        (map-set liquidator-rewards { liquidator: liquidator } { amount: u0 })
+        (ok true)
+    )
+)
+
+;; RISK CALCULATION HELPERS
+
+;; Liquidation Eligibility Check
+(define-private (can-liquidate
+        (user principal)
+        (borrow-amount uint)
+        (collateral-amount uint)
+    )
+    (let ((collateral-ratio (calculate-collateral-ratio borrow-amount collateral-amount)))
+        (<= collateral-ratio (var-get liquidation-threshold))
+    )
+)
