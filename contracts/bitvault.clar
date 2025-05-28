@@ -164,3 +164,74 @@
         )
     )
 )
+
+;; Borrow Against Collateral Function
+(define-public (borrow
+        (token-contract <sip-010-trait>)
+        (amount uint)
+    )
+    (let (
+            (sender tx-sender)
+            (user-deposit (default-to { amount: u0 } (map-get? user-deposits { user: sender })))
+            (user-borrow (default-to {
+                amount: u0,
+                collateral: u0,
+            }
+                (map-get? user-borrows { user: sender })
+            ))
+            (collateral-value (get amount user-deposit))
+            (borrow-value (+ amount (get amount user-borrow)))
+        )
+        ;; Input and Risk Validation
+        (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+        (asserts! (not (var-get protocol-paused)) ERR-NOT-INITIALIZED)
+        (asserts! (is-collateral-sufficient collateral-value borrow-value)
+            ERR-INSUFFICIENT-COLLATERAL
+        )
+        ;; Update Borrow Position
+        (map-set user-borrows { user: sender } {
+            amount: borrow-value,
+            collateral: collateral-value,
+        })
+        ;; Update Protocol Statistics
+        (var-set total-borrows (+ (var-get total-borrows) amount))
+        (ok true)
+    )
+)
+
+;; Loan Repayment Function
+(define-public (repay
+        (token-contract <sip-010-trait>)
+        (amount uint)
+    )
+    (let (
+            (sender tx-sender)
+            (user-borrow (default-to {
+                amount: u0,
+                collateral: u0,
+            }
+                (map-get? user-borrows { user: sender })
+            ))
+            (borrow-amount (get amount user-borrow))
+        )
+        ;; Input Validation
+        (asserts! (>= borrow-amount amount) ERR-INVALID-AMOUNT)
+        (asserts! (is-valid-token token-contract) ERR-NOT-AUTHORIZED)
+        ;; Execute Repayment Transfer
+        (match (contract-call? token-contract transfer amount sender
+            (as-contract tx-sender) none
+        )
+            success (begin
+                ;; Update Borrow Position
+                (map-set user-borrows { user: sender } {
+                    amount: (- borrow-amount amount),
+                    collateral: (get collateral user-borrow),
+                })
+                ;; Update Protocol Statistics
+                (var-set total-borrows (- (var-get total-borrows) amount))
+                (ok true)
+            )
+            error (err u101)
+        )
+    )
+)
